@@ -1,0 +1,470 @@
+---
+title: "BehaviorTracker"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    source_code: embed
+runtime: shiny
+---
+
+```{r global, include=FALSE}
+#load and clean data
+library(pacman)
+p_load(here, rio, flexdashboard, ggplot2, plotly, tidyverse, shiny,lubridate, modelsummary, fmsb)
+A <- import(here("EDLD652 final A - Sheet1.csv")) |> 
+  as_tibble() |> 
+  mutate_all(~ifelse(. == "" | . == "?"| . == "??", NA, .))
+B <- import(here("EDLD652 final B - Sheet1.csv")) |> 
+  as_tibble()|> 
+  mutate_all(~ifelse(. == "" | . == "?"| . == "??", NA, .))
+B$dur_min <- as.integer(B$dur_min)
+
+sapply(A, function(x) sum(is.na(x)))
+sapply(B, function(x) sum(is.na(x)))
+
+A_missing <- A |> 
+  filter(if_any(c(date, start_time, dur_min, dur_sec), is.na))
+
+B_missing <- B |> 
+  filter(if_any(c(date, start_time, dur_min, dur_sec), is.na))
+
+A_clean <- A |> 
+  mutate(weekday = str_replace_all(weekday, "thu", "Thu"),
+         start_time = str_replace_all(start_time, ";", ":"),
+         start_time = str_replace_all(start_time, "\"\"", ":"),
+         start_time = str_replace_all(start_time, "9:", "09:"),
+         across(c(cry:others2), ~ifelse(is.na(.), 0, .)),
+         across(c(cry:others2), as.integer)) |>
+  filter(!is.na(start_time) & !is.na(dur_min)) |> 
+  mutate(start_hour = as.integer(substr(start_time, 1, 2)),
+         duration = dur_min*60+dur_sec,
+         date = mdy(date),
+         weekday = factor(weekday,levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri","Sat"))) |> 
+  select(-c(dur_min,dur_sec)) |> 
+  relocate(start_hour, .after = start_time) |> 
+  mutate(year = year(date),
+         month = month(date),
+         day = day(date)) |> 
+  relocate(c(year, month, day), .after = date)
+
+
+B_clean <- B |> 
+  mutate(start_time = str_replace_all(start_time, "9:", "09:"),
+         across(c(cry:others2), ~ifelse(is.na(.), 0, .)),
+         across(c(cry:others2), as.integer))  |>
+  filter(!is.na(start_time) & !is.na(dur_min)) |> 
+  mutate(start_hour = as.integer(substr(start_time, 1, 2)),
+         duration = dur_min*60+dur_sec,
+         date = mdy(date),
+         weekday = factor(weekday,levels = c("Sun", "Mon", "Tue", "Wed", "Thu", "Fri","Sat"))) |> 
+  select(-c(dur_min,dur_sec)) |> 
+  relocate(start_hour, .after = start_time)|> 
+  mutate(year = year(date),
+         month = month(date),
+         day = day(date)) |> 
+  relocate(c(year, month, day), .after = date)
+
+datasummary_skim(A_clean)
+datasummary_skim(B_clean)
+
+```
+
+Home {data-icon="fa-home"}
+===================================
+
+<div style="text-align:center;">
+Welcome to 
+
+<span style="font-size:24px;">BehaviorTracker!</span>
+</div>
+
+Amber {data-navmenu="Data Collection" data-icon="fa-child"}
+===================================
+
+
+Bobby {data-navmenu="Data Collection" data-icon="fa-child"}
+===================================
+
+
+
+
+Amber {data-navmenu="Data Analysis" data-icon="fa-child"}
+===================================
+
+
+Sidebar {.sidebar}
+------------------------------
+```{r}
+selectInput("analysis_type", label = "Type of Analysis: ",
+            choices = c("Pattern", "Change over time", "Topography"), selected = "Pattern")            
+
+
+renderUI({
+  analysis_type <- input$analysis_type
+  
+  if (analysis_type == "Pattern") {
+   tagList( 
+    selectInput("x_axis", label = "x-axis:", 
+                choices = c("Month", "Day", "Hour"),
+                selected = "Month"),
+    
+  sliderInput("date_range", "Date Range", value = c(min(A_clean$date), max(A_clean$date)), min = min(A_clean$date), max = max(A_clean$date))
+  )
+  } else if (analysis_type == "Change over time") {
+    tagList( 
+    selectInput("x_axis", label = "x-axis:", 
+                choices = c("Month", "Day"),
+                selected = "Month"),
+    selectInput("y_axis", label = "y-axis:", 
+                choices = c("Duration", "Frequency"),
+                selected = "Duration"),
+  sliderInput("date_range", "Date Range", value = c(min(A_clean$date), max(A_clean$date)), min = min(A_clean$date), max = max(A_clean$date))
+  )
+  } else if (analysis_type == "Topography") {
+    sliderInput("date_range", "Date Range", value = c(min(A_clean$date), max(A_clean$date)), min = min(A_clean$date), max = max(A_clean$date))
+  }
+})
+```
+
+Plot
+-----------------------------------
+### Final Plot {data-width=1000}
+
+```{r}
+
+renderPlot({
+  analysis_type <- input$analysis_type
+
+### For "Pattern" = Bar graph  
+  if(analysis_type == "Pattern") {
+            if(input$x_axis == "Month") {
+            ggplot(filter(A_clean, date >=input$date_range[1] & date <=input$date_range[2]), 
+                   aes(x = as.factor(month))) +
+                   geom_bar()
+            }
+            else if(input$x_axis == "Day") {
+              ggplot(filter(A_clean, date >=input$date_range[1] & date <=input$date_range[2]), 
+                     aes(x = weekday)) +
+                   geom_bar()
+            }
+            else if(input$x_axis == "Hour") {
+              ggplot(filter(A_clean, date >=input$date_range[1] & date <=input$date_range[2]), aes(x = start_hour)) +
+                   geom_bar()
+            }
+### For "Change over time" = Line Graph  
+  } else if(analysis_type == "Change over time") {
+          if(input$y_axis == "Duration"){
+              if(input$x_axis == "Month") {
+                 
+                   A_clean_b_month <- A_clean |> 
+                     filter(date >=input$date_range[1] & date <=input$date_range[2]) |> 
+                     group_by(year, month) |> 
+                     summarise(total_duration = sum(duration)) |> 
+                     mutate(date = as.Date(paste(year,month,"01", sep = "-")))
+                   
+                   ggplot(A_clean_b_month, 
+                       aes(x = date, y = total_duration)) +
+                       geom_point()+
+                     geom_line()
+                }
+                else if(input$x_axis == "Day") {
+                  
+                    A_clean_b_day <- A_clean |> 
+                       filter(date >=input$date_range[1] & date <=input$date_range[2]) |> 
+                       group_by(year, month, day) |> 
+                       summarise(total_duration = sum(duration)) |> 
+                       mutate(date = as.Date(paste(year,month,day, sep = "-")))
+                    
+                    ggplot(A_clean_b_day, 
+                           aes(x = date, y = total_duration)) +
+                         geom_point()+
+                      geom_line()
+                }
+          }
+    else if(input$y_axis == "Frequency"){
+              if(input$x_axis == "Month") {
+                 
+                   A_clean_b_month <- A_clean |> 
+                     filter(date >=input$date_range[1] & date <=input$date_range[2]) |> 
+                     group_by(year, month) |> 
+                     summarise(total_count = n()) |> 
+                     mutate(date = as.Date(paste(year,month,"01", sep = "-")))
+                   
+                   ggplot(A_clean_b_month, 
+                       aes(x = date, y = total_count)) +
+                       geom_point()+
+                     geom_line()
+                }
+                else if(input$x_axis == "Day") {
+                  
+                    A_clean_b_day <- A_clean |> 
+                       filter(date >=input$date_range[1] & date <=input$date_range[2]) |> 
+                       group_by(year, month, day) |> 
+                       summarise(total_count = n()) |> 
+                       mutate(date = as.Date(paste(year,month,day, sep = "-")))
+                    
+                    ggplot(A_clean_b_day, 
+                           aes(x = date, y = total_count)) +
+                         geom_point()+
+                      geom_line()
+                }
+          }
+    
+ ### For "Topography" = RadarChart  
+   
+  } else if(analysis_type == "Topography") {
+    A_clean_c <- A_clean |>
+      filter(date >=input$date_range[1] & date <=input$date_range[2]) |> 
+      mutate (crying = cry+`cry w tears`,
+              vocal = scream+ whine,
+              aggression_ppl = `hit ppl`+ `kick ppl`+ `scratch ppl`+  `bite ppl`+ `throw @`,
+              aggression_obj = `hit object`+ `kick object`+ `bite object`+`throw object`, 
+              aggresssion_self = `hit self`+  `scratch self` + `bite self`, 
+              elope = drop +`run away`) |> 
+      select(c(crying:elope))
+    
+    max(apply(A_clean_c, 2, sum, na.rm = TRUE))
+    A_clean_c1 <- as.data.frame(rbind(rep(max(apply(A_clean_c, 2, sum, na.rm = TRUE)),6), rep(0,6),apply(A_clean_c, 2, sum, na.rm = TRUE)))
+    colnames(A_clean_c1) <- colnames(A_clean_c)
+    radarchart(A_clean_c1)
+  }
+  
+})
+
+
+```
+
+
+Context {.tabset}
+-----------------------------------
+### Pattern 
+In all of my data visualizations, I will be using de-identified and modified behavior data from two prior clients will be utilized, with explicit consent obtained from the respective client’s parents. Although permission was granted by the families of the client, the data was modified to prevent potential risk of identification. The behavior data includes the following variables: weekday, date, therapists, start time, location, frequency of 20 different behaviors, and total duration of each behavior episodes. 
+
+The first set of graphs are created under **"Pattern"** in the **"Type of Analysis"**.
+
+The goal of these barplots is to identify potential patterns of behavior. This will be beneficial for practitioners in identifying any necessary changes to interventions that practitioners should consider to assist children in achieving better regulation.
+
+In this barplot, three different factor variables can be chosen for the x-axis: "Month", "Day", "Hour." If the practitioners choose "Month", then they will see the frequency of behavior that occurred each month over a period of time that the user specifies in "Date Range". For example, if the child had 4 behaviors in July 2021 and 5 behaviors in July 2022, the graph will output 9 behaviors in July. This will help the practitioners if there are specific months, days, or hours that the client has more behaviors and therefore be able to look for potential intervention changes to make. 
+
+The biggest issue that I see is that the practitioners might mis-interpret the data because the y-axis is the total count. Therefore, if the practitioners choose the date range to be July 2021-August 2022, then the high frequency of behavior in July and August is not because the child had more behavior but may be because there is two months' worth of data for July and August (2021 and 2022) while other months only have one month worth of data (2021). I thought about potentially solving this issue by changing the y-axis to frequency of behavior over number of days of behavior for that month. However, on days that behaviors were not present, there wouldn't be any data. Therefore, my calculation would be an overestimate. Another potential method would be to calculate frequency of behavior over number of days for that month (which I have not yet attempted). Please let me know you if you have another suggestion. 
+
+A future addition may be to have the option to click which behaviors the user wants to include in the analysis. 
+
+### Change over time
+I will also be using de-identified and modified behavior data from two prior clients will be utilized. Again, as a reminder, the behavior data includes the following variables: weekday, date, therapists, start time, location, frequency of 20 different behaviors, and total duration of each behavior episodes. 
+
+The second set of graphs are created under **"Change over time"** in the **"Type of Analysis"**.
+
+The goal of these line graphs is see changes in behavior frequency or duration over time. This will be beneficial for practitioners in evaluating the effectiveness of the interventions they have implemented.
+
+Similar to the previous barplot, the user can choose between 2 different x-axis: "Month" and "Day". In addition, in this line graph, the user can also choose the y-axis. They can choose between "Frequency" and "Duration". If the user chooses "Month" and "Frequency", then the line plot will display the total number of behaviors that the client had each month 
+
+If the practitioners choose "Month", then they will see the frequency of behavior that occurred each month over a period of time that the user specifies in "Date Range". Unlike the previous barplot, if the child had 4 behaviors in July 2021 and 5 behavior in July 2022, the graph will output 4 behaviors in July 2021 and 5 behaviors in July 2022. Instead of observing patterns, this graph will be useful to examine the change of behavior over time. 
+
+A future addition may be to have textbox appear when the user hoover over certain point to indicate intervention changes. 
+
+### Topography
+I will also be using de-identified and modified behavior data from two prior clients will be utilized. Again, as a reminder, the behavior data includes the following variables: weekday, date, therapists, start time, location, frequency of 20 different behaviors, and total duration of each behavior episodes. For this graph, I grouped the 20 different behaviors into 6 categories. 
+
+The third set of graphs are created under **"Topography"** in the **"Type of Analysis"**.
+
+The goal of this radar chart is to examine the client's behavior profile. This might be beneficial for practitioners in the future to create child profiles and interventions that tends to be effective for each child profiles. 
+
+In this data visualization, the user can use the Date Range scale to change the frequency of each behavior during those dates. 
+
+A future addition will be to include a scale so that the user can interpret the magnitude of each data point. Another future addition may be to have the option to click which behaviors the user wants to include in the analysis. 
+
+Bobby {data-navmenu="Data Analysis" data-icon="fa-child"}
+===================================
+
+
+Sidebar {.sidebar}
+------------------------------
+```{r}
+selectInput("analysis_type_B", label = "Type of Analysis: ",
+            choices = c("Pattern", "Change over time", "Topography"), selected = "Pattern")            
+
+
+renderUI({
+  analysis_type_B <- input$analysis_type_B
+  
+  if (analysis_type_B == "Pattern") {
+   tagList( 
+    selectInput("x_axis_B", label = "x-axis:", 
+                choices = c("Month", "Day", "Hour"),
+                selected = "Month"),
+    
+  sliderInput("date_range_B", "Date Range", value = c(min(B_clean$date), as.Date("2022-05-23")), min = min(B_clean$date), max = as.Date("2022-05-23"))
+  )
+  } else if (analysis_type_B == "Change over time") {
+    tagList( 
+    selectInput("x_axis_B", label = "x-axis:", 
+                choices = c("Month", "Day"),
+                selected = "Month"),
+    selectInput("y_axis_B", label = "y-axis:", 
+                choices = c("Duration", "Frequency"),
+                selected = "Duration"),
+  sliderInput("date_range_B", "Date Range", value = c(min(B_clean$date), as.Date("2022-05-23")), min = min(B_clean$date), max = as.Date("2022-05-23"))
+  )
+  } else if (analysis_type_B == "Topography") {
+    sliderInput("date_range_B", "Date Range", value = c(min(B_clean$date), as.Date("2022-05-23")), min = min(B_clean$date), max = as.Date("2022-05-23"))
+  }
+})
+```
+
+Plot
+-----------------------------------
+### Final Plot {data-width=1000}
+
+```{r}
+
+renderPlot({
+  analysis_type_B <- input$analysis_type_B
+
+### For "Pattern" = Bar graph  
+  if(analysis_type_B == "Pattern") {
+            if(input$x_axis_B == "Month") {
+            ggplot(filter(B_clean, date >=input$date_range_B[1] & date <=input$date_range_B[2]), 
+                   aes(x = as.factor(month))) +
+                   geom_bar()
+            }
+            else if(input$x_axis_B == "Day") {
+              ggplot(filter(B_clean, date >=input$date_range_B[1] & date <=input$date_range_B[2]), 
+                     aes(x = weekday)) +
+                   geom_bar()
+            }
+            else if(input$x_axis_B == "Hour") {
+              ggplot(B_clean, aes(x = start_hour)) +
+                   geom_bar()
+            }
+### For "Change over time" = Line Graph  
+  } else if(analysis_type_B == "Change over time") {
+          if(input$y_axis_B == "Duration"){
+              if(input$x_axis_B == "Month") {
+                 
+                   B_clean_b_month <- B_clean |> 
+                     filter(date >=input$date_range_B[1] & date <=input$date_range_B[2]) |> 
+                     group_by(year, month) |> 
+                     summarise(total_duration = sum(duration)) |> 
+                     mutate(date = as.Date(paste(year,month,"01", sep = "-")))
+                   
+                   ggplot(B_clean_b_month, 
+                       aes(x = date, y = total_duration)) +
+                       geom_point()+
+                     geom_line()
+                }
+                else if(input$x_axis_B == "Day") {
+                  
+                    B_clean_b_day <- B_clean |> 
+                       filter(date >=input$date_range_B[1] & date <=input$date_range_B[2]) |> 
+                       group_by(year, month, day) |> 
+                       summarise(total_duration = sum(duration)) |> 
+                       mutate(date = as.Date(paste(year,month,day, sep = "-")))
+                    
+                    ggplot(B_clean_b_day, 
+                           aes(x = date, y = total_duration)) +
+                         geom_point()+
+                      geom_line()
+                }
+          }
+    else if(input$y_axis_B == "Frequency"){
+              if(input$x_axis_B == "Month") {
+                 
+                   B_clean_b_month <- B_clean |> 
+                     filter(date >=input$date_range_B[1] & date <=input$date_range_B[2]) |> 
+                     group_by(year, month) |> 
+                     summarise(total_count = n()) |> 
+                     mutate(date = as.Date(paste(year,month,"01", sep = "-")))
+                   
+                   ggplot(B_clean_b_month, 
+                       aes(x = date, y = total_count)) +
+                       geom_point()+
+                     geom_line()
+                }
+                else if(input$x_axis_B == "Day") {
+                  
+                    B_clean_b_day <- B_clean |> 
+                       filter(date >=input$date_range_B[1] & date <=input$date_range_B[2]) |> 
+                       group_by(year, month, day) |> 
+                       summarise(total_count = n()) |> 
+                       mutate(date = as.Date(paste(year,month,day, sep = "-")))
+                    
+                    ggplot(B_clean_b_day, 
+                           aes(x = date, y = total_count)) +
+                         geom_point()+
+                      geom_line()
+                }
+          }
+    
+ ### For "Topography" = RadarChart  
+   
+  } else if(analysis_type_B == "Topography") {
+    B_clean_c <- B_clean |>
+      filter(date >=input$date_range_B[1] & date <=input$date_range_B[2]) |> 
+      mutate (crying = cry+`cry w tears`,
+              vocal = scream+ whine,
+              aggression_ppl = `hit ppl`+ `kick ppl`+ `scratch ppl`+  `bite ppl`+ `throw @`,
+              aggression_obj = `hit object`+ `kick object`+ `bite object`+`throw object`, 
+              aggresssion_self = `hit self`+  `scratch self` + `bite self`, 
+              elope = drop +`run away`) |> 
+      select(c(crying:elope))
+    
+    max(apply(B_clean_c, 2, sum, na.rm = TRUE))
+    B_clean_c1 <- as.data.frame(rbind(rep(max(apply(B_clean_c, 2, sum, na.rm = TRUE)),6), rep(0,6),apply(B_clean_c, 2, sum, na.rm = TRUE)))
+    colnames(B_clean_c1) <- colnames(B_clean_c)
+    radarchart(B_clean_c1)
+  }
+  
+})
+
+
+```
+
+
+Context {.tabset}
+-----------------------------------
+### Pattern 
+In all of my data visualizations, I will be using de-identified and modified behavior data from two prior clients will be utilized, with explicit consent obtained from the respective client’s parents. Although permission was granted by the families of the client, the data was modified to prevent potential risk of identification. The behavior data includes the following variables: weekday, date, therapists, start time, location, frequency of 20 different behaviors, and total duration of each behavior episodes. 
+
+The first set of graphs are created under **"Pattern"** in the **"Type of Analysis"**.
+
+The goal of these barplots is to identify potential patterns of behavior. This will be beneficial for practitioners in identifying any necessary changes to interventions that practitioners should consider to assist children in achieving better regulation.
+
+In this barplot, three different factor variables can be chosen for the x-axis: "Month", "Day", "Hour." If the practitioners choose "Month", then they will see the frequency of behavior that occurred each month over a period of time that the user specifies in "Date Range". For example, if the child had 4 behaviors in July 2021 and 5 behaviors in July 2022, the graph will output 9 behaviors in July. This will help the practitioners if there are specific months, days, or hours that the client has more behaviors and therefore be able to look for potential intervention changes to make. 
+
+The biggest issue that I see is that the practitioners might mis-interpret the data because the y-axis is the total count. Therefore, if the practitioners choose the date range to be July 2021-August 2022, then the high frequency of behavior in July and August is not because the child had more behavior but may be because there is two months' worth of data for July and August (2021 and 2022) while other months only have one month worth of data (2021). I thought about potentially solving this issue by changing the y-axis to frequency of behavior over number of days of behavior for that month. However, on days that behaviors were not present, there wouldn't be any data. Therefore, my calculation would be an overestimate. Another potential method would be to calculate frequency of behavior over number of days for that month (which I have not yet attempted). Please let me know you if you have another suggestion. 
+
+A future addition may be to have the option to click which behaviors the user wants to include in the analysis. 
+
+### Change over time
+I will also be using de-identified and modified behavior data from two prior clients will be utilized. Again, as a reminder, the behavior data includes the following variables: weekday, date, therapists, start time, location, frequency of 20 different behaviors, and total duration of each behavior episodes. 
+
+The second set of graphs are created under **"Change over time"** in the **"Type of Analysis"**.
+
+The goal of these line graphs is see changes in behavior frequency or duration over time. This will be beneficial for practitioners in evaluating the effectiveness of the interventions they have implemented.
+
+Similar to the previous barplot, the user can choose between 2 different x-axis: "Month" and "Day". In addition, in this line graph, the user can also choose the y-axis. They can choose between "Frequency" and "Duration". If the user chooses "Month" and "Frequency", then the line plot will display the total number of behaviors that the client had each month 
+
+If the practitioners choose "Month", then they will see the frequency of behavior that occurred each month over a period of time that the user specifies in "Date Range". Unlike the previous barplot, if the child had 4 behaviors in July 2021 and 5 behavior in July 2022, the graph will output 4 behaviors in July 2021 and 5 behaviors in July 2022. Instead of observing patterns, this graph will be useful to examine the change of behavior over time. 
+
+A future addition may be to have textbox appear when the user hoover over certain point to indicate intervention changes. 
+
+### Topography
+I will also be using de-identified and modified behavior data from two prior clients will be utilized. Again, as a reminder, the behavior data includes the following variables: weekday, date, therapists, start time, location, frequency of 20 different behaviors, and total duration of each behavior episodes. For this graph, I grouped the 20 different behaviors into 6 categories. 
+
+The third set of graphs are created under **"Topography"** in the **"Type of Analysis"**.
+
+The goal of this radar chart is to examine the client's behavior profile. This might be beneficial for practitioners in the future to create child profiles and interventions that tends to be effective for each child profiles. 
+
+In this data visualization, the user can use the Date Range scale to change the frequency of each behavior during those dates. 
+
+A future addition will be to include a scale so that the user can interpret the magnitude of each data point. Another future addition may be to have the option to click which behaviors the user wants to include in the analysis.
+
+
+
+Compare {data-navmenu="Data Analysis" data-icon="fa-children"}
+===================================
+
+
+
